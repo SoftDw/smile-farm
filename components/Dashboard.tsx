@@ -35,7 +35,7 @@ const Gauge = ({ value, label, unit, min, max }: { value: number, label: string,
 
     return (
         <div className="flex flex-col items-center p-6 bg-white rounded-2xl shadow-lg h-full justify-center text-center">
-            <div className="relative w-48 h-24">
+            <div className="relative w-full max-w-[12rem] h-24 mx-auto">
                 <svg viewBox="0 0 100 50" className="w-full h-full transform -rotate-180">
                   {/* Background track */}
                   <path
@@ -75,7 +75,7 @@ const KpiCard = ({ title, value, trend, trendValue, icon, colorClass }: { title:
                 {icon}
             </div>
         </div>
-        <p className="text-4xl font-bold text-farm-text mt-2">{value}</p>
+        <p className="text-3xl md:text-4xl font-bold text-farm-text mt-2">{value}</p>
         {trend && (
             <div className="flex items-center mt-2 text-sm">
                 {trend === 'up' ? <ArrowUpIcon className="w-4 h-4 text-green-500" /> : <ArrowDownIcon className="w-4 h-4 text-red-500" />}

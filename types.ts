@@ -171,7 +171,7 @@ export interface PermissionSet {
   delete: boolean;
 }
 
-export type AppModule = 'dashboard' | 'crops' | 'environment' | 'gap' | 'inventory' | 'hr' | 'ledger' | 'profitability' | 'assistant' | 'settings' | 'admin' | 'sales' | 'smartdevices';
+export type AppModule = 'dashboard' | 'crops' | 'environment' | 'gap' | 'inventory' | 'hr' | 'ledger' | 'profitability' | 'assistant' | 'settings' | 'admin' | 'sales' | 'smartdevices' | 'reports';
 
 export type PermissionsMap = { [key in AppModule]: PermissionSet };
 

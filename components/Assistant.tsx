@@ -1,35 +1,13 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { GoogleGenAI, Chat } from "@google/genai";
 import { ChatMessage } from '../types';
 import SparklesIcon from './icons/SparklesIcon';
-
-// Mock AI for environments where API key is not available
-const useMockAI = !process.env.API_KEY;
 
 const Assistant: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [chat, setChat] = useState<Chat | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (useMockAI) return;
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-        const newChat = ai.chats.create({
-            model: 'gemini-2.5-flash',
-            config: {
-                systemInstruction: "คุณคือผู้เชี่ยวชาญด้านการเกษตรและผู้ช่วยฟาร์มอัจฉริยะสำหรับ 'Smile Farm' ให้คำแนะนำที่ชัดเจน รัดกุม และนำไปใช้ได้จริงเกี่ยวกับการจัดการพืชผล การควบคุมสภาพแวดล้อม และการตรวจจับศัตรูพืช ใช้โทนเสียงที่เป็นมิตรและให้กำลังใจ ตอบเป็นภาษาไทย",
-            },
-        });
-        setChat(newChat);
-    } catch(e) {
-        console.error("Failed to initialize Gemini AI:", e);
-        setMessages([{ role: 'model', text: 'เกิดข้อผิดพลาดในการเริ่มต้นผู้ช่วย AI โปรดตรวจสอบการตั้งค่า API key'}]);
-    }
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -40,44 +18,68 @@ const Assistant: React.FC = () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage: ChatMessage = { role: 'user', text: input };
-    setMessages(prev => [...prev, userMessage]);
+    const currentMessages = [...messages, userMessage];
+    setMessages(currentMessages);
+    const messageToSend = input;
     setInput('');
     setIsLoading(true);
 
-    if (useMockAI) {
-      setTimeout(() => {
-        setMessages(prev => [...prev, { role: 'model', text: `นี่คือคำตอบจำลองสำหรับคำถาม: "${input}". ในเวอร์ชันจริง ส่วนนี้จะเชื่อมต่อกับ Gemini API` }]);
-        setIsLoading(false);
-      }, 1000);
-      return;
-    }
+    // Prepare history for the stateless API
+    // The history is the list of messages before the new user message was added.
+    const historyForApi = messages.map(msg => ({
+        role: msg.role,
+        text: msg.text
+    }));
 
-    if (!chat) {
-      setIsLoading(false);
-      setMessages(prev => [...prev, {role: 'model', text: 'Chat session is not initialized.'}]);
-      return;
-    }
-    
+    // Add a placeholder for the model's response
     setMessages(prev => [...prev, { role: 'model', text: '' }]);
 
     try {
-      const result = await chat.sendMessageStream({ message: input });
+      const response = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          history: historyForApi,
+          message: messageToSend
+        })
+      });
+      
+      if (!response.ok || !response.body) {
+          const errorText = await response.text();
+          throw new Error(`API error: ${response.statusText} - ${errorText}`);
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-      for await (const chunk of result) {
-        const chunkText = chunk.text;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunkText = decoder.decode(value, { stream: true });
         setMessages(prev => {
           const newMessages = [...prev];
           newMessages[newMessages.length - 1].text += chunkText;
           return newMessages;
         });
       }
+
     } catch (error) {
-      console.error('Gemini API error:', error);
-      setMessages(prev => [...prev, {role: 'model', text: 'ขออภัย, เกิดข้อผิดพลาดในการสื่อสารกับผู้ช่วย AI'}]);
+      console.error('API proxy error:', error);
+      setMessages(prev => {
+        const newMessages = [...prev];
+        // Replace the empty model message with an error
+        const lastMessage = newMessages[newMessages.length - 1];
+        if (lastMessage.role === 'model' && lastMessage.text === '') {
+            lastMessage.text = 'ขออภัย, เกิดข้อผิดพลาดในการสื่อสารกับผู้ช่วย AI';
+        } else {
+            newMessages.push({ role: 'model', text: 'ขออภัย, เกิดข้อผิดพลาดในการสื่อสารกับผู้ช่วย AI' });
+        }
+        return newMessages;
+      });
     } finally {
       setIsLoading(false);
     }
-  }, [input, isLoading, chat]);
+  }, [input, isLoading, messages]);
 
   return (
     <div className="p-8 h-full flex flex-col">
@@ -97,7 +99,7 @@ const Assistant: React.FC = () => {
                {msg.role === 'user' && <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold flex-shrink-0">คุณ</div>}
             </div>
           ))}
-          {isLoading && (
+          {isLoading && messages[messages.length - 1]?.role !== 'model' && (
              <div className="flex items-start gap-4">
               <div className="w-10 h-10 rounded-full bg-farm-green flex items-center justify-center text-white font-bold flex-shrink-0">AI</div>
               <div className="max-w-xl p-4 rounded-2xl bg-white text-farm-text rounded-bl-none">

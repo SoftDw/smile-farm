@@ -121,57 +121,28 @@ const UserManagementTab: React.FC<AdminManagementProps> = ({ users, onSaveUser, 
 
     const handleAddUser = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!addFormData.email || !addFormData.password || !addFormData.roleId) {
-            alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+        if (!addFormData.email || !addFormData.password) {
+            alert('กรุณากรอกอีเมลและรหัสผ่าน');
             return;
         }
         setIsAdding(true);
         try {
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            // The client's only responsibility is to sign up the user with Supabase Auth.
+            // The database trigger 'handle_new_user' will automatically create the corresponding
+            // entries in the 'employees' and 'users' tables with the correct default role.
+            const { error: signUpError } = await supabase.auth.signUp({
                 email: addFormData.email,
                 password: addFormData.password,
             });
 
             if (signUpError) {
-                throw new Error(signUpError.message);
+                throw signUpError;
             }
-
-            if (signUpData.user) {
-                let newUserRecord: {id: number} | null = null;
-                // Wait for the database trigger to create the user profile. Retry a few times.
-                for (let i = 0; i < 5; i++) {
-                    const profileResponse: PostgrestSingleResponse<{id: number}> = await supabase.from('users').select('id').eq('username', addFormData.email).single();
-                    const userProfile = profileResponse.data;
-                    const profileError = profileResponse.error;
-                    
-                    if (userProfile) {
-                        newUserRecord = userProfile;
-                        break;
-                    }
-                    // Don't error out on "Not found", just wait and retry
-                    if (profileError && profileError.code !== 'PGRST116') {
-                        console.error('Error fetching user profile:', profileError);
-                    }
-                    
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-
-                if (!newUserRecord) {
-                    throw new Error("ไม่สามารถสร้างโปรไฟล์ผู้ใช้ได้ โปรดลองอีกครั้งหรือติดต่อผู้ดูแล");
-                }
-
-                await onSaveUser({
-                    id: newUserRecord!.id,
-                    role_id: parseInt(addFormData.roleId, 10),
-                });
-                
-                alert(`สร้างผู้ใช้ ${addFormData.email} สำเร็จแล้ว`);
-                handleCloseAddModal();
-            } else {
-                 throw new Error("ไม่ได้รับข้อมูลผู้ใช้หลังจากลงทะเบียน");
-            }
+            
+            alert(`ส่งคำเชิญไปยัง ${addFormData.email} สำเร็จแล้ว! ผู้ใช้จะสามารถล็อกอินได้หลังจากยืนยันอีเมล`);
+            handleCloseAddModal();
         } catch (error: any) {
-            alert(`เกิดข้อผิดพลาด: ${error.message}`);
+            alert(`เกิดข้อผิดพลาดในการสร้างผู้ใช้: ${error.message}`);
         } finally {
             setIsAdding(false);
         }
@@ -252,15 +223,7 @@ const UserManagementTab: React.FC<AdminManagementProps> = ({ users, onSaveUser, 
                         <input type="password" id="password" value={addFormData.password} onChange={e => setAddFormData({...addFormData, password: e.target.value})} className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" required minLength={6} />
                         <p className="text-xs text-gray-500 mt-1">ต้องมีอย่างน้อย 6 ตัวอักษร</p>
                     </div>
-                    <div>
-                        <label htmlFor="addRoleId" className="block text-sm font-medium text-gray-700">บทบาท</label>
-                        <select id="addRoleId" value={addFormData.roleId} onChange={e => setAddFormData({...addFormData, roleId: e.target.value})} className="mt-1 block w-full p-2 border border-gray-300 rounded-md bg-white" required>
-                            <option value="" disabled>-- เลือกบทบาท --</option>
-                            {roles.map(role => (
-                                <option key={role.id} value={role.id}>{role.name}</option>
-                            ))}
-                        </select>
-                    </div>
+                    
                     <div className="pt-4 flex justify-end gap-3">
                         <button type="button" onClick={handleCloseAddModal} disabled={isAdding} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg disabled:opacity-50">ยกเลิก</button>
                         <button type="submit" disabled={isAdding} className="bg-farm-green hover:bg-farm-green-dark text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-400">

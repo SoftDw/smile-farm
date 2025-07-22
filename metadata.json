@@ -1,6 +1,8 @@
 {
   "name": "Smile Farm",
   "description": "A smart farm management dashboard that provides environmental monitoring, crop management, and an AI-powered assistant to help with farming tasks.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "camera"
+  ],
   "prompt": ""
 }

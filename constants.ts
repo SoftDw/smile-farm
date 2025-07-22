@@ -5,7 +5,7 @@ import { AppModule, EnvironmentData } from './types';
 // Most has been removed as the app now connects to a live Supabase database.
 // Retaining constants that are independent of the database or for chart demonstration.
 
-export const MODULES: AppModule[] = [ 'dashboard', 'crops', 'environment', 'smartdevices', 'gap', 'inventory', 'sales', 'hr', 'ledger', 'profitability', 'assistant', 'settings', 'admin' ];
+export const MODULES: AppModule[] = [ 'dashboard', 'crops', 'environment', 'smartdevices', 'gap', 'inventory', 'sales', 'hr', 'ledger', 'profitability', 'reports', 'assistant', 'settings', 'admin' ];
 
 // Keep environment data for chart demonstration as this is often sourced differently (e.g., IoT sensors)
 export const MOCK_ENVIRONMENT_DATA: EnvironmentData[] = [

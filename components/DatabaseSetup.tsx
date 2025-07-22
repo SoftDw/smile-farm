@@ -1,10 +1,11 @@
+
 import React, { useState } from 'react';
 import Card from './Card';
 
-const sqlSchema = `-- SQL Schema for Smile Farm Application (v5 - Non-destructive User Trigger)
--- This script can be run multiple times without causing errors.
+const sqlSchema = `-- SQL Schema for Smile Farm Application (v7 - Correct RLS Policies)
+-- This script is idempotent and can be run multiple times safely.
 
--- 1. Create custom ENUM types safely
+-- 1. Create custom ENUM types if they don't exist
 DO $$ BEGIN CREATE TYPE public.crop_status AS ENUM ('Planted', 'Growing', 'Harvest Ready'); EXCEPTION WHEN duplicate_object THEN null; END $$;
 DO $$ BEGIN CREATE TYPE public.device_type AS ENUM ('Sensor', 'Pump', 'Light'); EXCEPTION WHEN duplicate_object THEN null; END $$;
 DO $$ BEGIN CREATE TYPE public.device_status AS ENUM ('Active', 'Inactive', 'Error'); EXCEPTION WHEN duplicate_object THEN null; END $$;
@@ -15,201 +16,80 @@ DO $$ BEGIN CREATE TYPE public.leave_request_status AS ENUM ('Pending', 'Approve
 DO $$ BEGIN CREATE TYPE public.task_status AS ENUM ('To Do', 'In Progress', 'Done'); EXCEPTION WHEN duplicate_object THEN null; END $$;
 DO $$ BEGIN CREATE TYPE public.order_status AS ENUM ('Quote', 'Confirmed', 'Shipped', 'Completed', 'Cancelled'); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
--- 2. Create tables if they don't exist
-CREATE TABLE IF NOT EXISTS public.crops (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL,
-    status public.crop_status NOT NULL DEFAULT 'Planted',
-    planting_date date NOT NULL,
-    expected_harvest date,
-    image_url text,
-    optimal_temp jsonb,
-    optimal_humidity jsonb,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
+-- 2. Create tables if they don't exist (structure remains the same)
+CREATE TABLE IF NOT EXISTS public.crops ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL, status public.crop_status NOT NULL DEFAULT 'Planted', planting_date date NOT NULL, expected_harvest date, image_url text, optimal_temp jsonb, optimal_humidity jsonb, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.devices ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL, type public.device_type NOT NULL, status public.device_status NOT NULL DEFAULT 'Inactive', created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.employees ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, first_name text NOT NULL, last_name text NOT NULL, nickname text, date_of_birth date, national_id text, address text, phone text, email text UNIQUE, start_date date NOT NULL, position text NOT NULL, salary numeric, contract_url text, training_history jsonb, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.roles ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL UNIQUE, permissions jsonb NOT NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.users ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, username text NOT NULL UNIQUE, employee_id bigint NOT NULL UNIQUE REFERENCES public.employees(id) ON DELETE CASCADE, role_id bigint NOT NULL REFERENCES public.roles(id) ON DELETE RESTRICT, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.ledger_entries ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, date date NOT NULL, description text NOT NULL, type public.ledger_type NOT NULL, amount numeric NOT NULL, crop_id bigint REFERENCES public.crops(id) ON DELETE SET NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.plots ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL, description text, current_crop_id bigint REFERENCES public.crops(id) ON DELETE SET NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.activity_logs ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, plot_id bigint NOT NULL REFERENCES public.plots(id) ON DELETE CASCADE, activity_type public.activity_type NOT NULL, date date NOT NULL, description text NOT NULL, materials_used text, personnel text, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.inventory_items ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL, category text, quantity numeric NOT NULL, unit text NOT NULL, low_stock_threshold numeric DEFAULT 0 NOT NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.payrolls ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE, period text NOT NULL, pay_date date NOT NULL, gross_pay numeric NOT NULL, deductions numeric NOT NULL, net_pay numeric NOT NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.time_logs ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE, "timestamp" timestamptz NOT NULL, type text NOT NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.leave_requests ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE, leave_type public.leave_request_type NOT NULL, start_date date NOT NULL, end_date date NOT NULL, reason text NOT NULL, status public.leave_request_status NOT NULL DEFAULT 'Pending', created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.tasks ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE, task_description text NOT NULL, assigned_date date NOT NULL, due_date date, status public.task_status NOT NULL DEFAULT 'To Do', created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.customers ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, name text NOT NULL, contact_person text, phone text, email text, address text, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.sales_orders ( id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY, customer_id bigint NOT NULL REFERENCES public.customers(id) ON DELETE RESTRICT, order_date date NOT NULL, status public.order_status NOT NULL DEFAULT 'Quote', items jsonb NOT NULL, total_amount numeric NOT NULL, created_at timestamptz DEFAULT now() NOT NULL );
+CREATE TABLE IF NOT EXISTS public.farm_settings ( id int PRIMARY KEY DEFAULT 1, info jsonb NOT NULL, created_at timestamptz DEFAULT now() NOT NULL, CONSTRAINT single_row_check CHECK (id = 1) );
 
-CREATE TABLE IF NOT EXISTS public.devices (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL,
-    type public.device_type NOT NULL,
-    status public.device_status NOT NULL DEFAULT 'Inactive',
-    created_at timestamptz DEFAULT now() NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS public.ledger_entries (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    date date NOT NULL,
-    description text NOT NULL,
-    type public.ledger_type NOT NULL,
-    amount numeric NOT NULL,
-    crop_id bigint REFERENCES public.crops(id) ON DELETE SET NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.plots (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL,
-    description text,
-    current_crop_id bigint REFERENCES public.crops(id) ON DELETE SET NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.activity_logs (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    plot_id bigint NOT NULL REFERENCES public.plots(id) ON DELETE CASCADE,
-    activity_type public.activity_type NOT NULL,
-    date date NOT NULL,
-    description text NOT NULL,
-    materials_used text,
-    personnel text,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.inventory_items (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL,
-    category text,
-    quantity numeric NOT NULL,
-    unit text NOT NULL,
-    low_stock_threshold numeric DEFAULT 0 NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.employees (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    first_name text NOT NULL,
-    last_name text NOT NULL,
-    nickname text,
-    date_of_birth date,
-    national_id text,
-    address text,
-    phone text,
-    email text UNIQUE,
-    start_date date NOT NULL,
-    position text NOT NULL,
-    salary numeric,
-    contract_url text,
-    training_history jsonb,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.payrolls (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
-    period text NOT NULL,
-    pay_date date NOT NULL,
-    gross_pay numeric NOT NULL,
-    deductions numeric NOT NULL,
-    net_pay numeric NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.time_logs (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
-    timestamp timestamptz NOT NULL,
-    type text NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.leave_requests (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
-    leave_type public.leave_request_type NOT NULL,
-    start_date date NOT NULL,
-    end_date date NOT NULL,
-    reason text NOT NULL,
-    status public.leave_request_status NOT NULL DEFAULT 'Pending',
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.tasks (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    employee_id bigint NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
-    task_description text NOT NULL,
-    assigned_date date NOT NULL,
-    due_date date,
-    status public.task_status NOT NULL DEFAULT 'To Do',
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.customers (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL,
-    contact_person text,
-    phone text,
-    email text,
-    address text,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.sales_orders (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    customer_id bigint NOT NULL REFERENCES public.customers(id) ON DELETE RESTRICT,
-    order_date date NOT NULL,
-    status public.order_status NOT NULL DEFAULT 'Quote',
-    items jsonb NOT NULL,
-    total_amount numeric NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.roles (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    name text NOT NULL UNIQUE,
-    permissions jsonb NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.users (
-    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    username text NOT NULL UNIQUE,
-    employee_id bigint NOT NULL UNIQUE REFERENCES public.employees(id) ON DELETE CASCADE,
-    role_id bigint NOT NULL REFERENCES public.roles(id) ON DELETE RESTRICT,
-    created_at timestamptz DEFAULT now() NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.farm_settings (
-    id int PRIMARY KEY DEFAULT 1,
-    info jsonb NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL,
-    CONSTRAINT single_row_check CHECK (id = 1)
-);
-
--- 3. Seed initial data (Roles, Settings)
+-- 3. Seed initial data (Roles, Settings) - No change in logic, just ensuring it's idempotent
 INSERT INTO public.roles (name, permissions) VALUES
-('Admin', '{"dashboard":{"view":true,"create":true,"edit":true,"delete":true},"crops":{"view":true,"create":true,"edit":true,"delete":true},"environment":{"view":true,"create":true,"edit":true,"delete":true},"smartdevices":{"view":true,"create":true,"edit":true,"delete":true},"gap":{"view":true,"create":true,"edit":true,"delete":true},"inventory":{"view":true,"create":true,"edit":true,"delete":true},"sales":{"view":true,"create":true,"edit":true,"delete":true},"hr":{"view":true,"create":true,"edit":true,"delete":true},"ledger":{"view":true,"create":true,"edit":true,"delete":true},"profitability":{"view":true,"create":true,"edit":true,"delete":true},"assistant":{"view":true,"create":true,"edit":true,"delete":true},"settings":{"view":true,"create":true,"edit":true,"delete":true},"admin":{"view":true,"create":true,"edit":true,"delete":true}}'),
-('Farm Manager', '{"dashboard":{"view":true,"create":false,"edit":false,"delete":false},"crops":{"view":true,"create":true,"edit":true,"delete":true},"environment":{"view":true,"create":false,"edit":false,"delete":false},"smartdevices":{"view":true,"create":true,"edit":true,"delete":false},"gap":{"view":true,"create":true,"edit":true,"delete":false},"inventory":{"view":true,"create":true,"edit":true,"delete":false},"hr":{"view":true,"create":true,"edit":true,"delete":false},"ledger":{"view":true,"create":true,"edit":false,"delete":false},"profitability":{"view":true,"create":false,"edit":false,"delete":false},"assistant":{"view":true,"create":false,"edit":false,"delete":false},"settings":{"view":true,"create":false,"edit":true,"delete":false},"admin":{"view":false,"create":false,"edit":false,"delete":false},"sales":{"view":true,"create":true,"edit":true,"delete":false}}'),
-('Worker', '{"dashboard":{"view":true,"create":false,"edit":false,"delete":false},"crops":{"view":true,"create":false,"edit":false,"delete":false},"environment":{"view":true,"create":false,"edit":false,"delete":false},"smartdevices":{"view":true,"create":false,"edit":false,"delete":false},"gap":{"view":true,"create":true,"edit":false,"delete":false},"inventory":{"view":true,"create":false,"edit":false,"delete":false},"hr":{"view":false,"create":false,"edit":false,"delete":false},"ledger":{"view":false,"create":false,"edit":false,"delete":false},"profitability":{"view":false,"create":false,"edit":false,"delete":false},"assistant":{"view":true,"create":false,"edit":false,"delete":false},"settings":{"view":false,"create":false,"edit":false,"delete":false},"admin":{"view":false,"create":false,"edit":false,"delete":false},"sales":{"view":false,"create":false,"edit":false,"delete":false}}')
+('Admin', '{"dashboard":{"view":true,"create":true,"edit":true,"delete":true},"crops":{"view":true,"create":true,"edit":true,"delete":true},"environment":{"view":true,"create":true,"edit":true,"delete":true},"smartdevices":{"view":true,"create":true,"edit":true,"delete":true},"gap":{"view":true,"create":true,"edit":true,"delete":true},"inventory":{"view":true,"create":true,"edit":true,"delete":true},"sales":{"view":true,"create":true,"edit":true,"delete":true},"hr":{"view":true,"create":true,"edit":true,"delete":true},"ledger":{"view":true,"create":true,"edit":true,"delete":true},"profitability":{"view":true,"create":true,"edit":true,"delete":true},"reports":{"view":true,"create":true,"edit":true,"delete":true},"assistant":{"view":true,"create":true,"edit":true,"delete":true},"settings":{"view":true,"create":true,"edit":true,"delete":true},"admin":{"view":true,"create":true,"edit":true,"delete":true}}'),
+('Farm Manager', '{"dashboard":{"view":true,"create":false,"edit":false,"delete":false},"crops":{"view":true,"create":true,"edit":true,"delete":true},"environment":{"view":true,"create":false,"edit":false,"delete":false},"smartdevices":{"view":true,"create":true,"edit":true,"delete":false},"gap":{"view":true,"create":true,"edit":true,"delete":false},"inventory":{"view":true,"create":true,"edit":true,"delete":false},"hr":{"view":true,"create":true,"edit":true,"delete":false},"ledger":{"view":true,"create":true,"edit":false,"delete":false},"profitability":{"view":true,"create":false,"edit":false,"delete":false},"reports":{"view":true,"create":false,"edit":false,"delete":false},"assistant":{"view":true,"create":false,"edit":false,"delete":false},"settings":{"view":true,"create":false,"edit":true,"delete":false},"admin":{"view":false,"create":false,"edit":false,"delete":false},"sales":{"view":true,"create":true,"edit":true,"delete":false}}'),
+('Worker', '{"dashboard":{"view":true,"create":false,"edit":false,"delete":false},"crops":{"view":true,"create":false,"edit":false,"delete":false},"environment":{"view":true,"create":false,"edit":false,"delete":false},"smartdevices":{"view":true,"create":false,"edit":false,"delete":false},"gap":{"view":true,"create":true,"edit":false,"delete":false},"inventory":{"view":true,"create":false,"edit":false,"delete":false},"hr":{"view":false,"create":false,"edit":false,"delete":false},"ledger":{"view":false,"create":false,"edit":false,"delete":false},"profitability":{"view":false,"create":false,"edit":false,"delete":false},"reports":{"view":false,"create":false,"edit":false,"delete":false},"assistant":{"view":true,"create":false,"edit":false,"delete":false},"settings":{"view":false,"create":false,"edit":false,"delete":false},"admin":{"view":false,"create":false,"edit":false,"delete":false},"sales":{"view":false,"create":false,"edit":false,"delete":false}}')
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO public.farm_settings (id, info)
-VALUES (1, '{"name": "Smile farm", "logoUrl": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJncmFkMSIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+PHN tribulationsvZmZzZXQ9IjAlIiBzdHlsZT0ic3RvcC1jb2xvcjojYTdkN2M1O3N0b3Atb3BhY2l0eToxIiAvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6IzVjOGQ4OTtzdG9wLW9wYWNpdHk6MSIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI2dyYWQxKSIgZD0iTSAxMDAsMTAgQyA0MCwzMCAyMCwxMDAgMTAwLDE5MCBDIDE4MCwxMDAgMTYwLDMwIDEwMCwxMCBaIiAvPjxwYXRoIGQ9Ik0gNjAsMTE1IFEwLDE0MCAxNDAsMTE1IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjgiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgLz48L3N2Zz4=", "address": "", "phone": "", "email": "contact@smilefarm.com", "taxId": ""}')
+VALUES (1, '{"name": "Smile farm", "logoUrl": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJncmFkMSIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I2E3ZDdjNTtzdG9wLW9wYWNpdHk6MSIgLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiM1YzhkODk7c3RvcC1vcGFjaXR5OjEiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0idXJsKCNncmFkMSkiIGQ9Ik0gMTAwLDEwIEMgNDAsMzAgMjAsMTAwIDEwMCwxOTAgQyAxODAsMTAwIDE2MCwzMCAxMDAsMTAgWiIgLz48cGF0aCBkPSJNIDYwLDExNSBRIDEsMTQwIDE0MCwxMTUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iOCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiAvPjwvc3ZnPg==", "address": "", "phone": "", "email": "contact@smilefarm.com", "taxId": ""}')
 ON CONFLICT (id) DO UPDATE SET info = excluded.info;
 
--- 4. Seed Admin User Data
-DO $$
+-- 4. Create Security Helper Functions
+CREATE OR REPLACE FUNCTION public.get_current_user_role()
+RETURNS text
+LANGUAGE sql
+SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT r.name
+  FROM public.users u
+  JOIN public.roles r ON u.role_id = r.id
+  WHERE u.username = auth.email();
+$$;
+
+CREATE OR REPLACE FUNCTION public.check_permission(module_name text, permission_type text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
 DECLARE
-    admin_role_id BIGINT;
-    admin_employee_id BIGINT;
+  user_role_id BIGINT;
+  has_permission BOOLEAN;
 BEGIN
-    SELECT id INTO admin_role_id FROM public.roles WHERE name = 'Admin';
-    IF admin_role_id IS NULL THEN RETURN; END IF;
-    
-    INSERT INTO public.employees (first_name, last_name, email, position, start_date)
-    VALUES ('Natthaphong', 'Namwongthas', 'natthaphong.namwongthas@gmail.com', 'System Administrator', '2024-01-01')
-    ON CONFLICT (email) DO NOTHING;
+  -- Get the role_id of the current user
+  SELECT role_id INTO user_role_id
+  FROM public.users
+  WHERE username = auth.email()
+  LIMIT 1;
 
-    SELECT id INTO admin_employee_id FROM public.employees WHERE email = 'natthaphong.namwongthas@gmail.com';
-    
-    IF admin_employee_id IS NOT NULL THEN
-        INSERT INTO public.users (username, employee_id, role_id)
-        VALUES ('natthaphong.namwongthas@gmail.com', admin_employee_id, admin_role_id)
-        ON CONFLICT (username) DO NOTHING;
-    END IF;
-END $$;
+  IF user_role_id IS NULL THEN
+    RETURN FALSE; -- No user profile found
+  END IF;
+
+  -- Check the permissions from the roles table
+  SELECT (permissions->module_name->>permission_type)::boolean INTO has_permission
+  FROM public.roles
+  WHERE id = user_role_id;
+  
+  -- Return true if permission exists and is true, otherwise false
+  RETURN COALESCE(has_permission, FALSE);
+END;
+$$;
 
 
--- 5. Create Trigger Function for New Users (NON-DESTRUCTIVE VERSION)
+-- 5. Create Trigger Function for New Users (Smarter Version)
+-- This function now correctly assigns 'Admin' to the very first user, and 'Worker' to everyone else.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -220,43 +100,42 @@ DECLARE
   user_role_id BIGINT;
   user_count INT;
 BEGIN
-  -- Step 1: Determine the role for the new user.
+  -- Determine the role for the new user.
   -- The first user created in the system gets the 'Admin' role.
-  -- All subsequent users get the 'Worker' role by default.
-  SELECT count(*) INTO user_count FROM public.users;
-  IF user_count = 0 THEN
+  SELECT count(*) INTO user_count FROM auth.users;
+  IF user_count = 1 THEN
     SELECT id INTO user_role_id FROM public.roles WHERE name = 'Admin';
   ELSE
     SELECT id INTO user_role_id FROM public.roles WHERE name = 'Worker';
   END IF;
   
-  -- Step 2: Check if an employee record already exists with the new user's email.
-  SELECT id INTO employee_id_var FROM public.employees WHERE email = new.email;
-  
-  -- Step 3: If no employee record is found, create a new one.
-  -- This prevents overwriting existing employee data.
-  IF employee_id_var IS NULL THEN
-    INSERT INTO public.employees (first_name, last_name, email, position, start_date)
-    VALUES ('New', 'User', new.email, 'Awaiting Setup', current_date)
-    RETURNING id INTO employee_id_var;
-  END IF;
+  -- Create a new employee record for this user.
+  INSERT INTO public.employees (first_name, last_name, email, position, start_date)
+  VALUES ('New User', '(Pending Setup)', new.email, 'Awaiting Setup', current_date)
+  RETURNING id INTO employee_id_var;
 
-  -- Step 4: Create the user profile in the public.users table,
-  -- linking the auth user to the (either existing or new) employee record and role.
+  -- Create the user profile in the public.users table.
   INSERT INTO public.users (username, employee_id, role_id)
-  VALUES (new.email, employee_id_var, user_role_id)
-  ON CONFLICT (username) DO NOTHING;
+  VALUES (new.email, employee_id_var, user_role_id);
   
   RETURN NEW;
 END;
 $$;
 
--- 6. Create the Trigger
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
-
+-- 6. Create the Trigger if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'on_auth_user_created'
+  ) THEN
+    CREATE TRIGGER on_auth_user_created
+      AFTER INSERT ON auth.users
+      FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+  END IF;
+END
+$$;
 
 -- 7. Enable Row Level Security (RLS) for all tables
 ALTER TABLE public.crops ENABLE ROW LEVEL SECURITY;
@@ -276,39 +155,152 @@ ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.farm_settings ENABLE ROW LEVEL SECURITY;
 
--- 8. Create RLS Policies
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.crops;
-CREATE POLICY "Allow authenticated users full access" ON public.crops FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.devices;
-CREATE POLICY "Allow authenticated users full access" ON public.devices FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.ledger_entries;
-CREATE POLICY "Allow authenticated users full access" ON public.ledger_entries FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.plots;
-CREATE POLICY "Allow authenticated users full access" ON public.plots FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.activity_logs;
-CREATE POLICY "Allow authenticated users full access" ON public.activity_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.inventory_items;
-CREATE POLICY "Allow authenticated users full access" ON public.inventory_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.employees;
-CREATE POLICY "Allow authenticated users full access" ON public.employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.payrolls;
-CREATE POLICY "Allow authenticated users full access" ON public.payrolls FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.time_logs;
-CREATE POLICY "Allow authenticated users full access" ON public.time_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.leave_requests;
-CREATE POLICY "Allow authenticated users full access" ON public.leave_requests FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.tasks;
-CREATE POLICY "Allow authenticated users full access" ON public.tasks FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.customers;
-CREATE POLICY "Allow authenticated users full access" ON public.customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.sales_orders;
-CREATE POLICY "Allow authenticated users full access" ON public.sales_orders FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.roles;
-CREATE POLICY "Allow authenticated users full access" ON public.roles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.users;
-CREATE POLICY "Allow authenticated users full access" ON public.users FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Allow authenticated users full access" ON public.farm_settings;
-CREATE POLICY "Allow authenticated users full access" ON public.farm_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- 8. Define Secure RLS Policies for each table
+-- Policies are now defined per-command (SELECT, INSERT, UPDATE, DELETE) for correctness.
+-- This replaces the old, incorrect 'FOR ALL' policies.
+
+-- For table 'crops' (module: 'crops')
+DROP POLICY IF EXISTS "Allow select access" ON public.crops;
+CREATE POLICY "Allow select access" ON public.crops FOR SELECT USING (check_permission('crops', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.crops;
+CREATE POLICY "Allow insert access" ON public.crops FOR INSERT WITH CHECK (check_permission('crops', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.crops;
+CREATE POLICY "Allow update access" ON public.crops FOR UPDATE USING (check_permission('crops', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.crops;
+CREATE POLICY "Allow delete access" ON public.crops FOR DELETE USING (check_permission('crops', 'delete'));
+
+-- For table 'devices' (module: 'smartdevices')
+DROP POLICY IF EXISTS "Allow select access" ON public.devices;
+CREATE POLICY "Allow select access" ON public.devices FOR SELECT USING (check_permission('smartdevices', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.devices;
+CREATE POLICY "Allow insert access" ON public.devices FOR INSERT WITH CHECK (check_permission('smartdevices', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.devices;
+CREATE POLICY "Allow update access" ON public.devices FOR UPDATE USING (check_permission('smartdevices', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.devices;
+CREATE POLICY "Allow delete access" ON public.devices FOR DELETE USING (check_permission('smartdevices', 'delete'));
+
+-- For table 'ledger_entries' (module: 'ledger')
+DROP POLICY IF EXISTS "Allow select access" ON public.ledger_entries;
+CREATE POLICY "Allow select access" ON public.ledger_entries FOR SELECT USING (check_permission('ledger', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.ledger_entries;
+CREATE POLICY "Allow insert access" ON public.ledger_entries FOR INSERT WITH CHECK (check_permission('ledger', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.ledger_entries;
+CREATE POLICY "Allow update access" ON public.ledger_entries FOR UPDATE USING (check_permission('ledger', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.ledger_entries;
+CREATE POLICY "Allow delete access" ON public.ledger_entries FOR DELETE USING (check_permission('ledger', 'delete'));
+
+-- For table 'plots' (module: 'gap')
+DROP POLICY IF EXISTS "Allow select access" ON public.plots;
+CREATE POLICY "Allow select access" ON public.plots FOR SELECT USING (check_permission('gap', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.plots;
+CREATE POLICY "Allow insert access" ON public.plots FOR INSERT WITH CHECK (check_permission('gap', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.plots;
+CREATE POLICY "Allow update access" ON public.plots FOR UPDATE USING (check_permission('gap', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.plots;
+CREATE POLICY "Allow delete access" ON public.plots FOR DELETE USING (check_permission('gap', 'delete'));
+
+-- For table 'activity_logs' (module: 'gap')
+DROP POLICY IF EXISTS "Allow select access" ON public.activity_logs;
+CREATE POLICY "Allow select access" ON public.activity_logs FOR SELECT USING (check_permission('gap', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.activity_logs;
+CREATE POLICY "Allow insert access" ON public.activity_logs FOR INSERT WITH CHECK (check_permission('gap', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.activity_logs;
+CREATE POLICY "Allow update access" ON public.activity_logs FOR UPDATE USING (check_permission('gap', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.activity_logs;
+CREATE POLICY "Allow delete access" ON public.activity_logs FOR DELETE USING (check_permission('gap', 'delete'));
+
+-- For table 'inventory_items' (module: 'inventory')
+DROP POLICY IF EXISTS "Allow select access" ON public.inventory_items;
+CREATE POLICY "Allow select access" ON public.inventory_items FOR SELECT USING (check_permission('inventory', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.inventory_items;
+CREATE POLICY "Allow insert access" ON public.inventory_items FOR INSERT WITH CHECK (check_permission('inventory', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.inventory_items;
+CREATE POLICY "Allow update access" ON public.inventory_items FOR UPDATE USING (check_permission('inventory', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.inventory_items;
+CREATE POLICY "Allow delete access" ON public.inventory_items FOR DELETE USING (check_permission('inventory', 'delete'));
+
+-- For table 'employees' and related (module: 'hr')
+DROP POLICY IF EXISTS "Allow select access" ON public.employees;
+CREATE POLICY "Allow select access" ON public.employees FOR SELECT USING (check_permission('hr', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.employees;
+CREATE POLICY "Allow insert access" ON public.employees FOR INSERT WITH CHECK (check_permission('hr', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.employees;
+CREATE POLICY "Allow update access" ON public.employees FOR UPDATE USING (check_permission('hr', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.employees;
+CREATE POLICY "Allow delete access" ON public.employees FOR DELETE USING (check_permission('hr', 'delete'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.payrolls;
+CREATE POLICY "Allow select access" ON public.payrolls FOR SELECT USING (check_permission('hr', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.payrolls;
+CREATE POLICY "Allow insert access" ON public.payrolls FOR INSERT WITH CHECK (check_permission('hr', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.payrolls;
+CREATE POLICY "Allow update access" ON public.payrolls FOR UPDATE USING (check_permission('hr', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.payrolls;
+CREATE POLICY "Allow delete access" ON public.payrolls FOR DELETE USING (check_permission('hr', 'delete'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.time_logs;
+CREATE POLICY "Allow select access" ON public.time_logs FOR SELECT USING (check_permission('hr', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.time_logs;
+CREATE POLICY "Allow insert access" ON public.time_logs FOR INSERT WITH CHECK (check_permission('hr', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.time_logs;
+CREATE POLICY "Allow update access" ON public.time_logs FOR UPDATE USING (check_permission('hr', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.time_logs;
+CREATE POLICY "Allow delete access" ON public.time_logs FOR DELETE USING (check_permission('hr', 'delete'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.leave_requests;
+CREATE POLICY "Allow select access" ON public.leave_requests FOR SELECT USING (check_permission('hr', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.leave_requests;
+CREATE POLICY "Allow insert access" ON public.leave_requests FOR INSERT WITH CHECK (check_permission('hr', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.leave_requests;
+CREATE POLICY "Allow update access" ON public.leave_requests FOR UPDATE USING (check_permission('hr', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.leave_requests;
+CREATE POLICY "Allow delete access" ON public.leave_requests FOR DELETE USING (check_permission('hr', 'delete'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.tasks;
+CREATE POLICY "Allow select access" ON public.tasks FOR SELECT USING (check_permission('hr', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.tasks;
+CREATE POLICY "Allow insert access" ON public.tasks FOR INSERT WITH CHECK (check_permission('hr', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.tasks;
+CREATE POLICY "Allow update access" ON public.tasks FOR UPDATE USING (check_permission('hr', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.tasks;
+CREATE POLICY "Allow delete access" ON public.tasks FOR DELETE USING (check_permission('hr', 'delete'));
+
+-- For 'customers' and 'sales_orders' tables (module: 'sales')
+DROP POLICY IF EXISTS "Allow select access" ON public.customers;
+CREATE POLICY "Allow select access" ON public.customers FOR SELECT USING (check_permission('sales', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.customers;
+CREATE POLICY "Allow insert access" ON public.customers FOR INSERT WITH CHECK (check_permission('sales', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.customers;
+CREATE POLICY "Allow update access" ON public.customers FOR UPDATE USING (check_permission('sales', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.customers;
+CREATE POLICY "Allow delete access" ON public.customers FOR DELETE USING (check_permission('sales', 'delete'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.sales_orders;
+CREATE POLICY "Allow select access" ON public.sales_orders FOR SELECT USING (check_permission('sales', 'view'));
+DROP POLICY IF EXISTS "Allow insert access" ON public.sales_orders;
+CREATE POLICY "Allow insert access" ON public.sales_orders FOR INSERT WITH CHECK (check_permission('sales', 'create'));
+DROP POLICY IF EXISTS "Allow update access" ON public.sales_orders;
+CREATE POLICY "Allow update access" ON public.sales_orders FOR UPDATE USING (check_permission('sales', 'edit'));
+DROP POLICY IF EXISTS "Allow delete access" ON public.sales_orders;
+CREATE POLICY "Allow delete access" ON public.sales_orders FOR DELETE USING (check_permission('sales', 'delete'));
+
+-- For 'roles' and 'users' tables (module: 'admin')
+DROP POLICY IF EXISTS "Allow select access" ON public.roles;
+CREATE POLICY "Allow select access" ON public.roles FOR SELECT USING (check_permission('admin', 'view'));
+DROP POLICY IF EXISTS "Allow update access" ON public.roles;
+CREATE POLICY "Allow update access" ON public.roles FOR UPDATE USING (check_permission('admin', 'edit'));
+
+DROP POLICY IF EXISTS "Allow select access" ON public.users;
+CREATE POLICY "Allow select access" ON public.users FOR SELECT USING (check_permission('admin', 'view'));
+DROP POLICY IF EXISTS "Allow update access" ON public.users;
+CREATE POLICY "Allow update access" ON public.users FOR UPDATE USING (check_permission('admin', 'edit'));
+
+-- For table 'farm_settings' (module: 'settings')
+DROP POLICY IF EXISTS "Allow select access" ON public.farm_settings;
+CREATE POLICY "Allow select access" ON public.farm_settings FOR SELECT USING (check_permission('settings', 'view'));
+DROP POLICY IF EXISTS "Allow update access" ON public.farm_settings;
+CREATE POLICY "Allow update access" ON public.farm_settings FOR UPDATE USING (check_permission('settings', 'edit'));
+
 
 -- 9. Add policies for anon read on public data for traceability
 DROP POLICY IF EXISTS "Allow anonymous read access" ON public.activity_logs;
@@ -337,7 +329,7 @@ const DatabaseSetup: React.FC = () => {
         <Card title="ตั้งค่าสกีมาฐานข้อมูล (Database Schema)">
             <div className="space-y-4">
                 <p className="text-gray-600">
-                    เพื่อให้แอปพลิเคชันทำงานได้อย่างถูกต้อง คุณต้องตั้งค่าตารางและข้อมูลพื้นฐานในฐานข้อมูล Supabase ของคุณก่อน
+                    เพื่อให้แอปพลิเคชันทำงานได้อย่างถูกต้องและปลอดภัยสูงสุด คุณต้องตั้งค่าตารางและสิทธิ์การเข้าถึง (Row Level Security) ในฐานข้อมูล Supabase ของคุณก่อน
                     <br/>
                     <strong className="text-farm-green-dark">สคริปต์นี้ปลอดภัย สามารถรันซ้ำได้โดยไม่เกิดข้อผิดพลาด</strong>
                 </p>
@@ -347,8 +339,8 @@ const DatabaseSetup: React.FC = () => {
                     <p><span className="font-bold">ขั้นตอนที่ 3:</span> วางโค้ดที่คัดลอกมาลงในหน้าต่าง SQL Editor แล้วกด <span className="font-mono bg-green-200 px-1 rounded">RUN</span></p>
                 </div>
                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h4 className="font-bold text-blue-800">สำหรับผู้ใช้ Admin:</h4>
-                    <p className="text-blue-700 text-sm">สคริปต์นี้จะสร้างข้อมูลสำหรับ <code className="font-mono">natthaphong.namwongthas@gmail.com</code> ให้โดยอัตโนมัติ คุณเพียงแค่ต้องไปที่เมนู <span className="font-mono bg-gray-200 px-1 rounded">Authentication</span> ใน Supabase เพื่อสร้างบัญชีล็อกอินด้วยอีเมลนี้และรหัสผ่านที่คุณต้องการ</p>
+                    <h4 className="font-bold text-blue-800">การสร้างผู้ใช้ Admin คนแรก</h4>
+                    <p className="text-blue-700 text-sm">สคริปต์นี้จะกำหนดให้ <strong className="font-semibold">ผู้ใช้คนแรกที่ลงทะเบียน</strong> ได้รับสิทธิ์ 'Admin' โดยอัตโนมัติ คุณเพียงแค่ใช้หน้า "เข้าสู่ระบบ / ลงทะเบียน" ในแอปพลิเคชันเพื่อสร้างบัญชีแรกของคุณ</p>
                 </div>
 
                 <div className="my-4">

@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 interface ModalProps {
@@ -14,7 +15,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, classNa
   return (
     <div
       id="modal-backdrop"
-      className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center"
+      className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -22,7 +23,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, classNa
     >
       <div
         id="modal-content"
-        className={`bg-white rounded-xl shadow-2xl p-8 m-4 w-full relative ${className || 'max-w-lg'}`}
+        className={`bg-white rounded-xl shadow-2xl p-6 md:p-8 relative w-full ${className || 'max-w-lg'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-6">

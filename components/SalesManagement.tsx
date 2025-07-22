@@ -82,7 +82,7 @@ const SalesManagement: React.FC<SalesManagementProps> = (props) => {
                 </h1>
 
                 <div className="border-b border-gray-200 mb-6">
-                    <nav className="flex space-x-2">
+                    <nav className="flex space-x-2 overflow-x-auto">
                         <TabButton tab="dashboard" label="ภาพรวม" />
                         <TabButton tab="orders" label="จัดการคำสั่งซื้อ" />
                         <TabButton tab="customers" label="จัดการลูกค้า (CRM)" />
@@ -266,7 +266,7 @@ const OrderManagementTab: React.FC<SalesManagementProps & { setOrderToPrint: (or
 
             {isModalOpen && (
                 <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={editingOrder ? `แก้ไขคำสั่งซื้อ #${editingOrder.id}` : 'สร้างคำสั่งซื้อใหม่'} className="max-w-4xl">
-                    <form onSubmit={handleSave} className="space-y-6">
+                    <form onSubmit={handleSave} className="space-y-6 max-h-[75vh] overflow-y-auto p-1">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">ลูกค้า</label>
@@ -311,7 +311,7 @@ const OrderManagementTab: React.FC<SalesManagementProps & { setOrderToPrint: (or
                              <p className="text-2xl font-bold">{totalAmount.toLocaleString()} ฿</p>
                         </div>
 
-                        <div className="pt-4 flex justify-end gap-3">
+                        <div className="pt-4 flex flex-wrap justify-end gap-3">
                             <button type="button" onClick={handleCloseModal} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">ยกเลิก</button>
                             <button
                                 type="button"

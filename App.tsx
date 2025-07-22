@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { PostgrestResponse, Session } from '@supabase/supabase-js';
+import { PostgrestResponse, type Session, PostgrestSingleResponse } from '@supabase/supabase-js';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Crops from './components/Crops';
@@ -21,6 +21,8 @@ import { supabase } from './lib/supabaseClient';
 import { MODULES, MOCK_ENVIRONMENT_DATA } from './constants';
 import { AppModule, Crop, Device, EnvironmentData, LedgerEntry, Plot, ActivityLog, FarmInfo, Alert, InventoryItem, Employee, PayrollEntry, TimeLog, LeaveRequest, AssignedTask, User, Role, CurrentUser, PermissionsMap, PermissionSet, Customer, SalesOrder, OrderItem } from './types';
 import { Database, Json } from './lib/database.types';
+import MenuIcon from './components/icons/MenuIcon';
+import Reports from './components/Reports';
 
 type CropInsert = Database['public']['Tables']['crops']['Insert'];
 type DeviceInsert = Database['public']['Tables']['devices']['Insert'];
@@ -40,6 +42,7 @@ type RoleUpdate = Database['public']['Tables']['roles']['Update'];
 const App = () => {
   const [activeView, setActiveView] = useState('dashboard');
   const [locationHash, setLocationHash] = useState(window.location.hash);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   // --- Local State ---
   const initialFarmInfo: FarmInfo = {
@@ -98,18 +101,35 @@ const App = () => {
     return newAlerts;
   }, [inventoryItems, crops]);
   
+  const pageTitles: { [key: string]: string } = {
+    dashboard: 'แผงควบคุมหลัก',
+    crops: 'จัดการพืชผล',
+    environment: 'ภาพรวมสภาพแวดล้อม',
+    smartdevices: 'อุปกรณ์สมาร์ทฟาร์ม',
+    gap: 'การจัดการมาตรฐาน GAP',
+    inventory: 'คลังปัจจัยการผลิต',
+    sales: 'การตลาดและการขาย',
+    hr: 'การจัดการพนักงาน',
+    ledger: 'บัญชีฟาร์ม',
+    profitability: 'กำไรขาดทุนต่อสินค้า',
+    reports: 'รายงานและบทวิเคราะห์',
+    assistant: 'ผู้ช่วยอัจฉริยะ',
+    settings: 'การตั้งค่า',
+    admin: 'การจัดการผู้ดูแลระบบ',
+  };
+
   // --- Data Fetching and Management ---
   const fetchData = useCallback(async (currentSession: Session) => {
     setLoading(true);
 
     try {
       // Step 1: Check if user profile exists
-      const { data: userData, error: userError } = await supabase
+      const { data: userData, error: userError }: PostgrestSingleResponse<Database['public']['Tables']['users']['Row']> = await supabase
         .from('users')
-        .select(`*, roles (*)`)
+        .select(`*`)
         .eq('username', currentSession.user.email!)
         .single();
-      
+
       if (userError || !userData) {
           console.error("Critical Error: User profile not found in database after login.", userError);
           alert("An error occurred while accessing your user profile. Please try logging in again. If the problem persists, contact support.");
@@ -117,45 +137,63 @@ const App = () => {
           setLoading(false);
           return;
       }
-      
-      // Use `any` to bypass suspected faulty type definition for the `roles` relation.
-      const typedUserDataWithRoles = userData as any;
 
+      // Step 1.5: Get permissions for the user's role
+      const { data: roleData, error: roleError }: PostgrestSingleResponse<Database['public']['Tables']['roles']['Row']> = await supabase
+        .from('roles')
+        .select('*')
+        .eq('id', userData.role_id)
+        .single();
+
+       if (roleError || !roleData) {
+          console.error("Critical Error: Could not retrieve role permissions for user.", roleError);
+          alert("An error occurred while accessing your user permissions. Please try logging in again.");
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+      }
+      
       // Step 2: Build the CurrentUser object with permissions
-      const userPermissions: PermissionsMap = { ... (typedUserDataWithRoles.roles?.permissions as any || {}) };
+      const userPermissions: PermissionsMap = (roleData.permissions as any || {});
       const user: CurrentUser = {
-        id: typedUserDataWithRoles.id,
-        username: typedUserDataWithRoles.username,
-        employeeId: typedUserDataWithRoles.employee_id,
-        roleId: typedUserDataWithRoles.role_id,
+        id: userData.id,
+        username: userData.username,
+        employeeId: userData.employee_id,
+        roleId: userData.role_id,
         password: '', // Not stored in frontend
         permissions: userPermissions,
       };
       setCurrentUser(user);
 
-      // Step 3: Fetch all farm data in a single Promise.all call
-      const allPromises: Promise<PostgrestResponse<any>>[] = [
-          supabase.from('crops').select('id, name, status, planting_date, expected_harvest, image_url, optimal_temp, optimal_humidity').order('created_at', { ascending: false }),
-          supabase.from('devices').select('id, name, type, status').order('created_at', { ascending: false }),
-          supabase.from('ledger_entries').select('id, date, description, type, amount, crop_id').order('date', { ascending: false }),
-          supabase.from('plots').select('id, name, description, current_crop_id').order('created_at', { ascending: false }),
-          supabase.from('activity_logs').select('id, plot_id, activity_type, date, description, materials_used, personnel').order('date', { ascending: false }),
-          supabase.from('inventory_items').select('id, name, category, quantity, unit, low_stock_threshold').order('name', { ascending: true }),
-          supabase.from('employees').select('id, first_name, last_name, nickname, date_of_birth, national_id, address, phone, email, start_date, position, salary, contract_url, training_history').order('first_name', { ascending: true }),
-          supabase.from('payrolls').select('id, employee_id, period, pay_date, gross_pay, deductions, net_pay').order('pay_date', { ascending: false }),
-          supabase.from('time_logs').select('id, employee_id, timestamp, type').order('timestamp', { ascending: false }),
-          supabase.from('leave_requests').select('id, employee_id, leave_type, start_date, end_date, reason, status').order('created_at', { ascending: false }),
-          supabase.from('tasks').select('id, employee_id, task_description, assigned_date, due_date, status').order('due_date', { ascending: true }),
-          supabase.from('customers').select('id, name, contact_person, phone, email, address').order('name', { ascending: true }),
-          supabase.from('sales_orders').select('id, customer_id, order_date, status, items, total_amount').order('order_date', { ascending: false }),
-          supabase.from('users').select('id, username, employee_id, role_id'),
-          supabase.from('roles').select('id, name, permissions'),
-          supabase.from('farm_settings').select('info').eq('id', 1).single()
+      // Step 3: Fetch all farm data concurrently
+      const dataPromises = [
+          supabase.from('crops').select('*').order('created_at', { ascending: false }),
+          supabase.from('devices').select('*').order('created_at', { ascending: false }),
+          supabase.from('ledger_entries').select('*').order('date', { ascending: false }),
+          supabase.from('plots').select('*').order('created_at', { ascending: false }),
+          supabase.from('activity_logs').select('*').order('date', { ascending: false }),
+          supabase.from('inventory_items').select('*').order('name', { ascending: true }),
+          supabase.from('employees').select('*').order('first_name', { ascending: true }),
+          supabase.from('payrolls').select('*').order('pay_date', { ascending: false }),
+          supabase.from('time_logs').select('*').order('timestamp', { ascending: false }),
+          supabase.from('leave_requests').select('*').order('created_at', { ascending: false }),
+          supabase.from('tasks').select('*').order('due_date', { ascending: true }),
+          supabase.from('customers').select('*').order('name', { ascending: true }),
+          supabase.from('sales_orders').select('*').order('order_date', { ascending: false }),
+          supabase.from('users').select('*'),
+          supabase.from('roles').select('*'),
       ];
 
-      const responses = await Promise.all(allPromises);
+      const settingsPromise = supabase.from('farm_settings').select('*').eq('id', 1).single();
+      
+      const [dataResponses, settingsRes] = await Promise.all([
+          Promise.all(dataPromises),
+          settingsPromise
+      ]);
 
-      const errors = responses.map(res => res.error).filter(Boolean);
+      const errors = (dataResponses as any[]).map(res => res.error).filter(Boolean);
+      if (settingsRes.error) errors.push(settingsRes.error);
+      
       if (errors.length > 0) {
         errors.forEach(error => console.error("Error fetching data:", error));
         throw new Error(`Failed to fetch data. Encountered ${errors.length} errors.`);
@@ -164,8 +202,8 @@ const App = () => {
       const [
           cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
           employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
-          salesOrdersRes, usersRes, rolesRes, settingsRes
-      ] = responses as any[];
+          salesOrdersRes, usersRes, rolesRes
+      ] = dataResponses as any[];
 
 
       // Step 4: Set state
@@ -186,7 +224,7 @@ const App = () => {
       setRoles(rolesRes.data?.map((r: any) => ({ id: r.id, name: r.name, permissions: (r.permissions as any) ?? {} })) ?? []);
       
       if (settingsRes.data) {
-        setFarmInfo(settingsRes.data.info as any);
+        setFarmInfo((settingsRes.data as any).info as any);
       }
       
     } catch (error) {
@@ -208,30 +246,32 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    // Set initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if(session) {
+      if (session) {
         fetchData(session);
       } else {
         setLoading(false);
       }
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-        setCurrentUser(null); // Reset user on auth change
-        if (session) {
-          fetchData(session);
-        } else {
-          setLoading(false);
-          setActiveView('dashboard'); // Reset to default view on logout
-        }
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setCurrentUser(null); // Reset user on auth change
+      if (session) {
+        fetchData(session);
+      } else {
+        setLoading(false);
+        setActiveView('dashboard'); // Reset to default view on logout
       }
-    );
+    });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [fetchData]);
 
@@ -288,7 +328,7 @@ const App = () => {
   
   const handleSaveFarmInfo = async (info: FarmInfo) => {
       setFarmInfo(info);
-      const { error } = await supabase.from('farm_settings').upsert([{ id: 1, info: info as unknown as Json }], { onConflict: 'id' });
+      const { error } = await supabase.from('farm_settings').upsert([{ id: 1, info: info as unknown as Json }] as any, { onConflict: 'id' });
        if (error) {
           alert(`Error saving farm settings: ${error.message}`);
           console.error(error);
@@ -322,6 +362,7 @@ const App = () => {
       case 'sales': return <SalesManagement customers={customers} salesOrders={salesOrders} crops={crops} permissions={viewPerms} onSaveCustomer={handleSaveCustomer} onDeleteCustomer={handleDeleteCustomer} onSaveSalesOrder={handleSaveSalesOrder} onDeleteSalesOrder={handleDeleteSalesOrder} farmInfo={farmInfo} />;
       case 'hr': return <EmployeeManagement employees={employees} payrolls={payrolls} timeLogs={timeLogs} leaveRequests={leaveRequests} tasks={tasks} permissions={viewPerms} onSaveEmployee={handleSaveEmployee} onDeleteEmployee={handleDeleteEmployee} onSaveLeaveRequest={handleSaveLeaveRequest} onSaveTask={handleSaveTask} farmInfo={farmInfo} />;
       case 'admin': return <AdminManagement users={users} roles={roles} employees={employees} onSaveUser={handleSaveUser} onSaveRole={handleSaveRole} />;
+      case 'reports': return <Reports salesOrders={salesOrders} ledgerEntries={ledgerEntries} crops={crops} customers={customers} />;
       case 'assistant': return <Assistant />;
       case 'settings': return <Settings farmInfo={farmInfo} onSave={handleSaveFarmInfo} />;
       default: return <Dashboard crops={crops} devices={devices} environmentData={environmentData} ledgerEntries={ledgerEntries} alerts={alerts} />;
@@ -369,9 +410,21 @@ const App = () => {
         farmName={farmInfo.name}
         permissions={currentUser.permissions}
         onLogout={handleLogout}
+        isSidebarOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
       />
-      <main className="flex-1 overflow-y-auto bg-gray-50">
-        {renderActiveView()}
+      <main className="flex-1 flex flex-col w-full lg:w-auto">
+        {/* Mobile Header */}
+        <header className="lg:hidden sticky top-0 bg-white/80 backdrop-blur-sm shadow-sm z-30 flex items-center justify-between p-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="text-gray-700 p-2 -ml-2">
+                <MenuIcon />
+            </button>
+            <span className="text-lg font-bold text-farm-green-dark">{pageTitles[activeView] || 'Smile Farm'}</span>
+            <div className="w-6"></div> {/* Spacer to balance title */}
+        </header>
+        <div className="flex-1 overflow-y-auto">
+          {renderActiveView()}
+        </div>
       </main>
     </div>
   );
