@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { PostgrestResponse, type Session, PostgrestSingleResponse } from '@supabase/supabase-js';
 import Sidebar from './components/Sidebar';
@@ -23,6 +22,7 @@ import { AppModule, Crop, Device, EnvironmentData, LedgerEntry, Plot, ActivityLo
 import { Database, Json } from './lib/database.types';
 import MenuIcon from './components/icons/MenuIcon';
 import Reports from './components/Reports';
+import LoadingScreen from './components/LoadingScreen';
 
 type CropInsert = Database['public']['Tables']['crops']['Insert'];
 type DeviceInsert = Database['public']['Tables']['devices']['Insert'];
@@ -141,7 +141,7 @@ const App = () => {
 
     try {
       // Step 1: Check if user profile exists
-      const { data: userData, error: userError }: PostgrestSingleResponse<Database['public']['Tables']['users']['Row']> = await supabase
+      const { data: userData, error: userError }: PostgrestSingleResponse<UserRow> = await supabase
         .from('users')
         .select(`*`)
         .eq('username', currentSession.user.email!)
@@ -156,7 +156,7 @@ const App = () => {
       }
 
       // Step 1.5: Get permissions for the user's role
-      const { data: roleData, error: roleError }: PostgrestSingleResponse<Database['public']['Tables']['roles']['Row']> = await supabase
+      const { data: roleData, error: roleError }: PostgrestSingleResponse<RoleRow> = await supabase
         .from('roles')
         .select('*')
         .eq('id', userData.role_id)
@@ -183,39 +183,65 @@ const App = () => {
       setCurrentUser(user);
 
       // Step 3: Fetch all farm data concurrently
-      const tablePromises = [
+      const settingsRes: PostgrestSingleResponse<FarmSettingsRow> = await supabase.from('farm_settings').select('id, info, created_at').eq('id', 1).single();
+
+      // Chunk 1
+      const [
+          cropsRes,
+          devicesRes,
+          ledgerRes,
+          plotsRes,
+          activityLogsRes,
+      ] = await Promise.all([
           supabase.from('crops').select('*').order('created_at', { ascending: false }),
           supabase.from('devices').select('*').order('created_at', { ascending: false }),
           supabase.from('ledger_entries').select('*').order('date', { ascending: false }),
           supabase.from('plots').select('*').order('created_at', { ascending: false }),
           supabase.from('activity_logs').select('*').order('date', { ascending: false }),
+      ]);
+      
+      // Chunk 2
+      const [
+          inventoryRes,
+          employeesRes,
+          payrollsRes,
+          timeLogsRes,
+          leaveRequestsRes,
+      ] = await Promise.all([
           supabase.from('inventory_items').select('*').order('name', { ascending: true }),
           supabase.from('employees').select('*').order('first_name', { ascending: true }),
           supabase.from('payrolls').select('*').order('pay_date', { ascending: false }),
           supabase.from('time_logs').select('*').order('timestamp', { ascending: false }),
           supabase.from('leave_requests').select('*').order('created_at', { ascending: false }),
+      ]);
+      
+      // Chunk 3
+      const [
+          tasksRes,
+          customersRes,
+          salesOrdersRes,
+          usersRes,
+          rolesRes
+      ] = await Promise.all([
           supabase.from('tasks').select('*').order('due_date', { ascending: true }),
           supabase.from('customers').select('*').order('name', { ascending: true }),
           supabase.from('sales_orders').select('*').order('order_date', { ascending: false }),
           supabase.from('users').select('*'),
           supabase.from('roles').select('*'),
-      ];
-      
-      const [
-          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
-          employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
-          salesOrdersRes, usersRes, rolesRes
-      ] = await Promise.all(tablePromises);
+      ]);
 
-      const settingsRes = await supabase.from('farm_settings').select('id, info, created_at').eq('id', 1).single();
 
       const allResponses = [
-          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
-          employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
-          salesOrdersRes, usersRes, rolesRes, settingsRes
+          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, 
+          inventoryRes, employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, 
+          tasksRes, customersRes, salesOrdersRes, usersRes, rolesRes
       ];
       const errors = allResponses.map(res => res.error).filter(Boolean);
       
+      if (settingsRes.error) {
+        errors.push(settingsRes.error);
+      }
+
       if (errors.length > 0) {
         errors.forEach(error => console.error("Error fetching data:", error));
         throw new Error(`Failed to fetch data. Encountered ${errors.length} errors.`);
@@ -330,8 +356,44 @@ const App = () => {
   const handleSaveActivityLog = (log: ActivityLogInsert) => handleSave('activity_logs', log);
   const handleSaveInventoryItem = (item: InventoryItemInsert) => handleSave('inventory_items', item);
   const handleDeleteInventoryItem = (id: number) => handleDelete('inventory_items', id);
+
+  const handleDeleteEmployee = async (employeeId: number) => {
+      if (currentUser && currentUser.employeeId === employeeId) {
+          alert("คุณไม่สามารถลบบัญชีของตัวเองได้");
+          return;
+      }
+      
+      const associatedPayrolls = payrolls.filter(p => p.employeeId === employeeId);
+      const associatedTasks = tasks.filter(t => t.employeeId === employeeId);
+      
+      if (associatedPayrolls.length > 0 || associatedTasks.length > 0) {
+          const dependencies = [];
+          if (associatedPayrolls.length > 0) {
+              dependencies.push(`บัญชีเงินเดือน (${associatedPayrolls.length} รายการ)`);
+          }
+          if (associatedTasks.length > 0) {
+              dependencies.push(`งานที่มอบหมาย (${associatedTasks.length} รายการ)`);
+          }
+          const alertMessage = `ไม่สามารถลบพนักงานคนนี้ได้ เนื่องจากมีข้อมูลผูกอยู่:\n\n- ${dependencies.join('\n- ')}`;
+          alert(alertMessage);
+          return;
+      }
+
+      const isUser = users.some(u => u.employeeId === employeeId);
+      const confirmationMessage = isUser 
+          ? `คุณแน่ใจหรือไม่ว่าต้องการลบพนักงานและผู้ใช้งานคนนี้ออกจากระบบ? การกระทำนี้ไม่สามารถย้อนกลับได้ และจะลบข้อมูลที่เกี่ยวข้องทั้งหมด`
+          : `คุณแน่ใจหรือไม่ว่าต้องการลบพนักงานคนนี้?`;
+
+      if (window.confirm(confirmationMessage)) {
+          // Deleting from 'employees' will cascade and delete the corresponding row in 'users'
+          // due to the ON DELETE CASCADE constraint on the foreign key.
+          await handleDelete('employees', employeeId);
+          // Note: The auth.user record will be orphaned. Deleting auth users requires admin privileges
+          // and is best handled via a secure server-side function, which is outside the current scope.
+      }
+  };
+
   const handleSaveEmployee = (emp: EmployeeInsert) => handleSave('employees', emp);
-  const handleDeleteEmployee = (id: number) => handleDelete('employees', id);
   const handleSaveLeaveRequest = (req: LeaveRequestInsert) => handleSave('leave_requests', req);
   const handleSaveTask = (task: TaskInsert) => handleSave('tasks', task);
   const handleSaveCustomer = (customer: CustomerInsert) => handleSave('customers', customer);
@@ -376,23 +438,26 @@ const App = () => {
       case 'inventory': return <Inventory items={inventoryItems} onSave={handleSaveInventoryItem} onDelete={handleDeleteInventoryItem} permissions={viewPerms} />;
       case 'sales': return <SalesManagement customers={customers} salesOrders={salesOrders} crops={crops} permissions={viewPerms} onSaveCustomer={handleSaveCustomer} onDeleteCustomer={handleDeleteCustomer} onSaveSalesOrder={handleSaveSalesOrder} onDeleteSalesOrder={handleDeleteSalesOrder} farmInfo={farmInfo} />;
       case 'hr': return <EmployeeManagement employees={employees} payrolls={payrolls} timeLogs={timeLogs} leaveRequests={leaveRequests} tasks={tasks} permissions={viewPerms} onSaveEmployee={handleSaveEmployee} onDeleteEmployee={handleDeleteEmployee} onSaveLeaveRequest={handleSaveLeaveRequest} onSaveTask={handleSaveTask} farmInfo={farmInfo} />;
-      case 'admin': return <AdminManagement users={users} roles={roles} employees={employees} onSaveUser={handleSaveUser} onSaveRole={handleSaveRole} />;
+      case 'admin': return <AdminManagement users={users} roles={roles} employees={employees} onSaveUser={handleSaveUser} onSaveRole={handleSaveRole} onDeleteEmployee={handleDeleteEmployee} currentUser={currentUser} payrolls={payrolls} tasks={tasks} />;
       case 'reports': return <Reports salesOrders={salesOrders} ledgerEntries={ledgerEntries} crops={crops} customers={customers} />;
       case 'assistant': return <Assistant />;
       case 'settings': return <Settings farmInfo={farmInfo} onSave={handleSaveFarmInfo} />;
       default: return <Dashboard crops={crops} devices={devices} environmentData={environmentData} ledgerEntries={ledgerEntries} alerts={alerts} />;
     }
   };
+  
+  const loadingMessages = [
+      "กำลังเชื่อมต่อกับเซิร์ฟเวอร์ Smile Farm...",
+      "ตรวจสอบสิทธิ์การใช้งาน...",
+      "กำลังโหลดข้อมูลพืชผล...",
+      "ซิงค์สถานะอุปกรณ์สมาร์ทฟาร์ม...",
+      "ดึงข้อมูลทางการเงิน...",
+      "เตรียมแผงควบคุม...",
+      "อีกไม่นาน... เกือบเสร็จแล้วครับ"
+  ];
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center h-screen bg-gray-100">
-        <div className="text-center">
-            <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-farm-green"></div>
-            <h2 className="text-xl font-semibold text-gray-700 mt-4">Loading Farm Data...</h2>
-        </div>
-      </div>
-    );
+    return <LoadingScreen messages={loadingMessages} />;
   }
 
   if (!session) {

@@ -1,7 +1,7 @@
 
 
 import React, { useState } from 'react';
-import { User, Role, Employee, AppModule, PermissionSet } from '../types';
+import { User, Role, Employee, AppModule, PermissionSet, CurrentUser, PayrollEntry, AssignedTask } from '../types';
 import { MODULES } from '../constants';
 import Card from './Card';
 import KeyIcon from './icons/KeyIcon';
@@ -19,8 +19,12 @@ interface AdminManagementProps {
     users: User[];
     roles: Role[];
     employees: Employee[];
+    payrolls: PayrollEntry[];
+    tasks: AssignedTask[];
     onSaveUser: (user: UserUpdate) => Promise<void>;
     onSaveRole: (role: RoleUpdate) => Promise<void>;
+    onDeleteEmployee: (employeeId: number) => Promise<void>;
+    currentUser: CurrentUser;
 }
 
 const AdminManagement: React.FC<AdminManagementProps> = (props) => {
@@ -62,7 +66,7 @@ const AdminManagement: React.FC<AdminManagementProps> = (props) => {
 
 
 // --- User Management Tab ---
-const UserManagementTab: React.FC<AdminManagementProps> = ({ users, onSaveUser, roles, employees }) => {
+const UserManagementTab: React.FC<AdminManagementProps> = ({ users, onSaveUser, roles, employees, onDeleteEmployee, currentUser, payrolls, tasks }) => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [editFormData, setEditFormData] = useState({ roleId: '' });
@@ -173,20 +177,41 @@ const UserManagementTab: React.FC<AdminManagementProps> = ({ users, onSaveUser, 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                        {users.map(user => (
-                            <tr key={user.id} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 font-mono">{user.username}</td>
-                                <td className="px-4 py-3 font-medium">{getEmployeeName(user.employeeId)}</td>
-                                <td className="px-4 py-3">
-                                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                                        {getRoleName(user.roleId)}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-right">
-                                    <button onClick={() => handleOpenEditModal(user)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">แก้ไขบทบาท</button>
-                                </td>
-                            </tr>
-                        ))}
+                        {users.map(user => {
+                            const isSelf = currentUser.employeeId === user.employeeId;
+                            const hasDependencies = payrolls.some(p => p.employeeId === user.employeeId) || tasks.some(t => t.employeeId === user.employeeId);
+                            const isDisabled = isSelf || hasDependencies;
+
+                            let tooltip = '';
+                            if (isSelf) {
+                                tooltip = 'ไม่สามารถลบผู้ใช้ของตัวเองได้';
+                            } else if (hasDependencies) {
+                                tooltip = 'ไม่สามารถลบได้เนื่องจากมีข้อมูลเงินเดือนหรืองานที่ผูกอยู่';
+                            }
+
+                            return (
+                                <tr key={user.id} className="hover:bg-gray-50">
+                                    <td className="px-4 py-3 font-mono">{user.username}</td>
+                                    <td className="px-4 py-3 font-medium">{getEmployeeName(user.employeeId)}</td>
+                                    <td className="px-4 py-3">
+                                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                                            {getRoleName(user.roleId)}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                        <button onClick={() => handleOpenEditModal(user)} className="text-sm text-blue-600 hover:text-blue-800 font-medium mr-4">แก้ไขบทบาท</button>
+                                        <button
+                                            onClick={() => onDeleteEmployee(user.employeeId)}
+                                            disabled={isDisabled}
+                                            title={tooltip}
+                                            className="text-sm text-red-600 hover:text-red-800 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
+                                        >
+                                            ลบ
+                                        </button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

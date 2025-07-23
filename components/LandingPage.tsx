@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import jsQR from 'jsqr';
 import Modal from './Modal';
@@ -21,6 +20,10 @@ import type { Database } from '../lib/database.types';
 interface LandingPageProps {
   onGoToLogin: () => void;
 }
+
+type ActivityLogRow = Database['public']['Tables']['activity_logs']['Row'];
+type PlotRow = Database['public']['Tables']['plots']['Row'];
+type CropRow = Database['public']['Tables']['crops']['Row'];
 
 const FeatureCard: React.FC<{ icon: React.ReactNode, title: string, description: string, delay?: number }> = ({ icon, title, description, delay = 0 }) => (
     <div className="bg-white/50 backdrop-blur-sm p-8 rounded-2xl shadow-lg text-center transform hover:-translate-y-2 transition-all duration-300 reveal-on-scroll hover:shadow-2xl border border-white/20" style={{ transitionDelay: `${delay}ms` }}>
@@ -142,35 +145,55 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin }) => {
     try {
         const logId = parseInt(parts[2], 10);
         
-        type ActivityLogRow = Database['public']['Tables']['activity_logs']['Row'];
         const { data: log, error: logError }: PostgrestSingleResponse<ActivityLogRow> = await supabase
-            .from('activity_logs').select('id, plot_id, activity_type, date, description, materials_used, personnel').eq('id', logId).eq('activity_type', 'เก็บเกี่ยว').single();
+            .from('activity_logs')
+            .select('id, plot_id, activity_type, date, description, materials_used, personnel')
+            .eq('id', logId)
+            .eq('activity_type', 'เก็บเกี่ยว')
+            .single();
+
         if (logError || !log) throw new Error("ไม่พบข้อมูลการเก็บเกี่ยวสำหรับรหัสนี้");
 
-        type PlotRow = Database['public']['Tables']['plots']['Row'];
         const { data: plot, error: plotError }: PostgrestSingleResponse<PlotRow> = await supabase
-            .from('plots').select('id, name, description, current_crop_id').eq('id', log.plot_id).single();
+            .from('plots')
+            .select('id, name, description, current_crop_id')
+            .eq('id', log.plot_id)
+            .single();
+            
         if (plotError || !plot) throw new Error("ไม่พบข้อมูลแปลงปลูกที่เกี่ยวข้อง");
-
         if (!plot.current_crop_id) throw new Error("แปลงปลูกไม่ได้ผูกกับพืชผลใดๆ ในขณะนี้");
-
-        type CropRow = Database['public']['Tables']['crops']['Row'];
+        
         const { data: crop, error: cropError }: PostgrestSingleResponse<CropRow> = await supabase
-            .from('crops').select('id, name, status, planting_date, expected_harvest, image_url, optimal_temp, optimal_humidity').eq('id', plot.current_crop_id).single();
+            .from('crops')
+            .select('id, name, status, planting_date, expected_harvest, image_url, optimal_temp, optimal_humidity')
+            .eq('id', plot.current_crop_id)
+            .single();
+
         if (cropError || !crop) throw new Error("ไม่พบข้อมูลพืชผลสำหรับแปลงนี้");
         
         setTraceResult({
             activityLog: {
-                id: log.id, plotId: log.plot_id, activityType: log.activity_type as ActivityLog['activityType'],
-                date: log.date, description: log.description, materialsUsed: log.materials_used ?? undefined,
+                id: log.id,
+                plotId: log.plot_id,
+                activityType: log.activity_type,
+                date: log.date,
+                description: log.description,
+                materialsUsed: log.materials_used ?? undefined,
                 personnel: log.personnel || ''
             },
             plot: {
-                id: plot.id, name: plot.name, description: plot.description || '', currentCropId: plot.current_crop_id ?? undefined,
+                id: plot.id,
+                name: plot.name,
+                description: plot.description || '',
+                currentCropId: plot.current_crop_id ?? undefined,
             },
             crop: {
-                id: crop.id, name: crop.name, status: crop.status as any, plantingDate: crop.planting_date,
-                expectedHarvest: crop.expected_harvest || '', imageUrl: crop.image_url || '',
+                id: crop.id,
+                name: crop.name,
+                status: crop.status as Crop['status'],
+                plantingDate: crop.planting_date,
+                expectedHarvest: crop.expected_harvest || '',
+                imageUrl: crop.image_url || '',
                 optimalTemp: crop.optimal_temp as [number, number] | undefined,
                 optimalHumidity: crop.optimal_humidity as [number, number] | undefined,
             }

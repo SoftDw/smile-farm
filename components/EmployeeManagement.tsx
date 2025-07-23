@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Employee, PayrollEntry, TimeLog, LeaveRequest, AssignedTask, PermissionSet, FarmInfo } from '../types';
 import Card from './Card';
@@ -81,7 +82,7 @@ const EmployeeManagement: React.FC<EmployeeManagementProps> = (props) => {
             </div>
 
             <div className="no-print">
-                {activeTab === 'roster' && <RosterTab {...props} />}
+                {activeTab === 'roster' && <RosterTab employees={props.employees} onSaveEmployee={props.onSaveEmployee} onDeleteEmployee={props.onDeleteEmployee} permissions={props.permissions} />}
                 {activeTab === 'payroll' && <PayrollTab payrolls={props.payrolls} getEmployeeName={getEmployeeName} setPayrollToPrint={setPayrollToPrint} />}
                 {activeTab === 'time' && <TimeAndLeaveTab 
                     leaveRequests={props.leaveRequests} 
@@ -113,10 +114,8 @@ const initialFormData: Omit<Employee, 'id' | 'trainingHistory' | 'contractUrl'> 
 };
 
 // --- Roster Tab ---
-const RosterTab = ({employees, onSaveEmployee, onDeleteEmployee, payrolls, tasks, permissions}: {
+const RosterTab = ({employees, onSaveEmployee, onDeleteEmployee, permissions}: {
     employees: Employee[], 
-    payrolls: PayrollEntry[],
-    tasks: AssignedTask[],
     permissions: PermissionSet,
     onSaveEmployee: (employee: EmployeeInsert) => Promise<void>;
     onDeleteEmployee: (employeeId: number) => Promise<void>;
@@ -180,20 +179,6 @@ const RosterTab = ({employees, onSaveEmployee, onDeleteEmployee, payrolls, tasks
         await onSaveEmployee(employeeToSave);
         handleCloseModal();
     };
-
-    const handleDelete = (employeeId: number) => {
-        const isUsedInPayroll = payrolls.some(p => p.employeeId === employeeId);
-        const isUsedInTasks = tasks.some(t => t.employeeId === employeeId);
-        
-        if (isUsedInPayroll || isUsedInTasks) {
-            alert('ไม่สามารถลบพนักงานคนนี้ได้ เนื่องจากมีข้อมูลผูกกับระบบบัญชีเงินเดือนหรืองานที่มอบหมายแล้ว');
-            return;
-        }
-
-        if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบพนักงานคนนี้?`)) {
-            onDeleteEmployee(employeeId);
-        }
-    };
     
     return (
         <Card title="ทะเบียนประวัติพนักงาน">
@@ -230,7 +215,7 @@ const RosterTab = ({employees, onSaveEmployee, onDeleteEmployee, payrolls, tasks
                             {(permissions.edit || permissions.delete) && (
                                 <td className="px-4 py-3 text-right">
                                     {permissions.edit && <button onClick={() => handleOpenModal(emp)} className="text-sm text-blue-600 hover:text-blue-800 font-medium mr-4">แก้ไข</button>}
-                                    {permissions.delete && <button onClick={() => handleDelete(emp.id)} className="text-sm text-red-600 hover:text-red-800 font-medium">ลบ</button>}
+                                    {permissions.delete && <button onClick={() => onDeleteEmployee(emp.id)} className="text-sm text-red-600 hover:text-red-800 font-medium">ลบ</button>}
                                 </td>
                             )}
                         </tr>
