@@ -38,6 +38,23 @@ type SalesOrderInsert = Database['public']['Tables']['sales_orders']['Insert'];
 type UserUpdate = Database['public']['Tables']['users']['Update'];
 type RoleUpdate = Database['public']['Tables']['roles']['Update'];
 
+type CropRow = Database['public']['Tables']['crops']['Row'];
+type DeviceRow = Database['public']['Tables']['devices']['Row'];
+type LedgerEntryRow = Database['public']['Tables']['ledger_entries']['Row'];
+type PlotRow = Database['public']['Tables']['plots']['Row'];
+type ActivityLogRow = Database['public']['Tables']['activity_logs']['Row'];
+type InventoryItemRow = Database['public']['Tables']['inventory_items']['Row'];
+type EmployeeRow = Database['public']['Tables']['employees']['Row'];
+type PayrollRow = Database['public']['Tables']['payrolls']['Row'];
+type TimeLogRow = Database['public']['Tables']['time_logs']['Row'];
+type LeaveRequestRow = Database['public']['Tables']['leave_requests']['Row'];
+type TaskRow = Database['public']['Tables']['tasks']['Row'];
+type CustomerRow = Database['public']['Tables']['customers']['Row'];
+type SalesOrderRow = Database['public']['Tables']['sales_orders']['Row'];
+type UserRow = Database['public']['Tables']['users']['Row'];
+type RoleRow = Database['public']['Tables']['roles']['Row'];
+type FarmSettingsRow = Database['public']['Tables']['farm_settings']['Row'];
+
 
 const App = () => {
   const [activeView, setActiveView] = useState('dashboard');
@@ -166,7 +183,7 @@ const App = () => {
       setCurrentUser(user);
 
       // Step 3: Fetch all farm data concurrently
-      const dataPromises = [
+      const tablePromises = [
           supabase.from('crops').select('*').order('created_at', { ascending: false }),
           supabase.from('devices').select('*').order('created_at', { ascending: false }),
           supabase.from('ledger_entries').select('*').order('date', { ascending: false }),
@@ -183,48 +200,46 @@ const App = () => {
           supabase.from('users').select('*'),
           supabase.from('roles').select('*'),
       ];
-
-      const settingsPromise = supabase.from('farm_settings').select('*').eq('id', 1).single();
       
-      const [dataResponses, settingsRes] = await Promise.all([
-          Promise.all(dataPromises),
-          settingsPromise
-      ]);
+      const [
+          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
+          employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
+          salesOrdersRes, usersRes, rolesRes
+      ] = await Promise.all(tablePromises);
 
-      const errors = (dataResponses as any[]).map(res => res.error).filter(Boolean);
-      if (settingsRes.error) errors.push(settingsRes.error);
+      const settingsRes = await supabase.from('farm_settings').select('id, info, created_at').eq('id', 1).single();
+
+      const allResponses = [
+          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
+          employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
+          salesOrdersRes, usersRes, rolesRes, settingsRes
+      ];
+      const errors = allResponses.map(res => res.error).filter(Boolean);
       
       if (errors.length > 0) {
         errors.forEach(error => console.error("Error fetching data:", error));
         throw new Error(`Failed to fetch data. Encountered ${errors.length} errors.`);
       }
 
-      const [
-          cropsRes, devicesRes, ledgerRes, plotsRes, activityLogsRes, inventoryRes, 
-          employeesRes, payrollsRes, timeLogsRes, leaveRequestsRes, tasksRes, customersRes,
-          salesOrdersRes, usersRes, rolesRes
-      ] = dataResponses as any[];
-
-
       // Step 4: Set state
-      setCrops(cropsRes.data?.map((c: any) => ({ id: c.id, name: c.name, status: c.status as Crop['status'], plantingDate: c.planting_date, expectedHarvest: c.expected_harvest || "", imageUrl: c.image_url || "", optimalTemp: c.optimal_temp as any, optimalHumidity: c.optimal_humidity as any })) ?? []);
-      setDevices(devicesRes.data?.map((d: any) => ({...d, status: d.status as Device['status'], type: d.type as Device['type']})) ?? []);
-      setLedgerEntries(ledgerRes.data?.map((l: any) => ({ id: l.id, date: l.date, description: l.description, type: l.type as LedgerEntry['type'], amount: l.amount, cropId: l.crop_id ?? undefined })) ?? []);
-      setPlots(plotsRes.data?.map((p: any) => ({ id: p.id, name: p.name, description: p.description || '', currentCropId: p.current_crop_id ?? undefined })) ?? []);
-      setActivityLogs(activityLogsRes.data?.map((a: any) => ({ id: a.id, plotId: a.plot_id, activityType: a.activity_type as ActivityLog['activityType'], date: a.date, description: a.description, materialsUsed: a.materials_used ?? undefined, personnel: a.personnel || '' })) ?? []);
-      setInventoryItems(inventoryRes.data?.map((i: any) => ({ id: i.id, name: i.name, category: i.category || '', quantity: i.quantity, unit: i.unit, lowStockThreshold: i.low_stock_threshold })) ?? []);
-      setEmployees(employeesRes.data?.map((e: any) => ({ id: e.id, firstName: e.first_name, lastName: e.last_name, nickname: e.nickname || '', dateOfBirth: e.date_of_birth || '', nationalId: e.national_id || '', address: e.address || '', phone: e.phone || '', email: e.email || '', startDate: e.start_date, position: e.position, salary: e.salary || 0, contractUrl: e.contract_url ?? undefined, trainingHistory: (e.training_history as string[] | undefined) ?? undefined })) ?? []);
-      setPayrolls(payrollsRes.data?.map((p: any) => ({ id: p.id, employeeId: p.employee_id, period: p.period, payDate: p.pay_date, grossPay: p.gross_pay, deductions: p.deductions, netPay: p.net_pay })) ?? []);
-      setTimeLogs(timeLogsRes.data?.map((t: any) => ({ id: t.id, employeeId: t.employee_id, timestamp: t.timestamp, type: t.type as 'clock-in' | 'clock-out' })) ?? []);
-      setLeaveRequests(leaveRequestsRes.data?.map((r: any) => ({ id: r.id, employeeId: r.employee_id, leaveType: r.leave_type as LeaveRequest['leaveType'], startDate: r.start_date, endDate: r.end_date, reason: r.reason, status: r.status as LeaveRequest['status'] })) ?? []);
-      setTasks(tasksRes.data?.map((t: any) => ({ id: t.id, employeeId: t.employee_id, taskDescription: t.task_description, assignedDate: t.assigned_date, dueDate: t.due_date || '', status: t.status as AssignedTask['status'] })) ?? []);
-      setCustomers(customersRes.data?.map((c: any) => ({ id: c.id, name: c.name, contactPerson: c.contact_person || '', phone: c.phone || '', email: c.email || '', address: c.address || '' })) ?? []);
-      setSalesOrders(salesOrdersRes.data?.map((o: any) => ({ id: o.id, customerId: o.customer_id, orderDate: o.order_date, status: o.status as SalesOrder['status'], totalAmount: o.total_amount, items: (o.items as any) ?? [] })) ?? []);
-      setUsers(usersRes.data?.map((u: any) => ({ id: u.id, username: u.username, employeeId: u.employee_id, roleId: u.role_id, password: '' })) ?? []);
-      setRoles(rolesRes.data?.map((r: any) => ({ id: r.id, name: r.name, permissions: (r.permissions as any) ?? {} })) ?? []);
+      setCrops(cropsRes.data?.map((c): Crop => ({ id: c.id, name: c.name, status: c.status, plantingDate: c.planting_date, expectedHarvest: c.expected_harvest || "", imageUrl: c.image_url || "", optimalTemp: c.optimal_temp as [number, number] | undefined, optimalHumidity: c.optimal_humidity as [number, number] | undefined })) ?? []);
+      setDevices(devicesRes.data?.map((d): Device => ({ id: d.id, name: d.name, type: d.type, status: d.status })) ?? []);
+      setLedgerEntries(ledgerRes.data?.map((l): LedgerEntry => ({ id: l.id, date: l.date, description: l.description, type: l.type, amount: l.amount, cropId: l.crop_id ?? undefined })) ?? []);
+      setPlots(plotsRes.data?.map((p): Plot => ({ id: p.id, name: p.name, description: p.description || '', currentCropId: p.current_crop_id ?? undefined })) ?? []);
+      setActivityLogs(activityLogsRes.data?.map((a): ActivityLog => ({ id: a.id, plotId: a.plot_id, activityType: a.activity_type, date: a.date, description: a.description, materialsUsed: a.materials_used ?? undefined, personnel: a.personnel || '' })) ?? []);
+      setInventoryItems(inventoryRes.data?.map((i): InventoryItem => ({ id: i.id, name: i.name, category: i.category || '', quantity: i.quantity, unit: i.unit, lowStockThreshold: i.low_stock_threshold })) ?? []);
+      setEmployees(employeesRes.data?.map((e): Employee => ({ id: e.id, firstName: e.first_name, lastName: e.last_name, nickname: e.nickname || '', dateOfBirth: e.date_of_birth || '', nationalId: e.national_id || '', address: e.address || '', phone: e.phone || '', email: e.email || '', startDate: e.start_date, position: e.position, salary: e.salary || 0, contractUrl: e.contract_url ?? undefined, trainingHistory: (e.training_history as string[] | undefined) ?? undefined })) ?? []);
+      setPayrolls(payrollsRes.data?.map((p): PayrollEntry => ({ id: p.id, employeeId: p.employee_id, period: p.period, payDate: p.pay_date, grossPay: p.gross_pay, deductions: p.deductions, netPay: p.net_pay })) ?? []);
+      setTimeLogs(timeLogsRes.data?.map((t): TimeLog => ({ id: t.id, employeeId: t.employee_id, timestamp: t.timestamp, type: t.type as 'clock-in' | 'clock-out' })) ?? []);
+      setLeaveRequests(leaveRequestsRes.data?.map((r): LeaveRequest => ({ id: r.id, employeeId: r.employee_id, leaveType: r.leave_type, startDate: r.start_date, endDate: r.end_date, reason: r.reason, status: r.status })) ?? []);
+      setTasks(tasksRes.data?.map((t): AssignedTask => ({ id: t.id, employeeId: t.employee_id, taskDescription: t.task_description, assignedDate: t.assigned_date, dueDate: t.due_date || '', status: t.status })) ?? []);
+      setCustomers(customersRes.data?.map((c): Customer => ({ id: c.id, name: c.name, contactPerson: c.contact_person || '', phone: c.phone || '', email: c.email || '', address: c.address || '' })) ?? []);
+      setSalesOrders(salesOrdersRes.data?.map((o): SalesOrder => ({ id: o.id, customerId: o.customer_id, orderDate: o.order_date, status: o.status, totalAmount: o.total_amount, items: (o.items as unknown as OrderItem[]) ?? [] })) ?? []);
+      setUsers(usersRes.data?.map((u): User => ({ id: u.id, username: u.username, employeeId: u.employee_id, roleId: u.role_id, password: '' })) ?? []);
+      setRoles(rolesRes.data?.map((r): Role => ({ id: r.id, name: r.name, permissions: (r.permissions as Role['permissions']) ?? {} })) ?? []);
       
       if (settingsRes.data) {
-        setFarmInfo((settingsRes.data as any).info as any);
+        setFarmInfo(settingsRes.data.info as unknown as FarmInfo);
       }
       
     } catch (error) {
